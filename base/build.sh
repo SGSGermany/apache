@@ -112,6 +112,21 @@ cmd buildah config \
     --port "443/tcp" \
     "$CONTAINER"
 
+echo + "APACHE_VERSION=\"\$(buildah run $CONTAINER -- /bin/sh -c 'echo \"\$HTTPD_VERSION\"')\""
+APACHE_VERSION="$(buildah run "$CONTAINER" -- /bin/sh -c 'echo "$HTTPD_VERSION"')"
+
+cmd buildah config \
+    --annotation org.opencontainers.image.title="Apache" \
+    --annotation org.opencontainers.image.description="An Apache container with an improved configuration structure." \
+    --annotation org.opencontainers.image.version="$APACHE_VERSION" \
+    --annotation org.opencontainers.image.url="https://github.com/SGSGermany/apache" \
+    --annotation org.opencontainers.image.authors="SGS Serious Gaming & Simulations GmbH" \
+    --annotation org.opencontainers.image.vendor="SGS Serious Gaming & Simulations GmbH" \
+    --annotation org.opencontainers.image.licenses="MIT" \
+    --annotation org.opencontainers.image.base.name="$REGISTRY/$OWNER/$IMAGE:$DEFAULT_TAG" \
+    --annotation org.opencontainers.image.base.digest="$(podman image inspect --format '{{.Digest}}' "$IMAGE:$DEFAULT_TAG")" \
+    "$CONTAINER"
+
 cmd buildah commit "$CONTAINER" "$IMAGE:${TAGS[0]}"
 cmd buildah rm "$CONTAINER"
 
