@@ -1,0 +1,177 @@
+#!/bin/sh
+set -eu -o pipefail
+export LC_ALL=C
+
+print_usage() {
+    echo "Usage:"
+    echo "  a2enmod MODULE..."
+    echo "  a2dismod MODULE..."
+    echo "  a2querymod [-q|--quiet] [MODULE]..."
+    echo
+    echo "  a2enconf CONFIG..."
+    echo "  a2disconf CONFIG..."
+    echo "  a2queryconf [-q|--quiet] [CONFIG]..."
+    echo
+    echo "  a2ensite VHOST..."
+    echo "  a2dissite VHOST..."
+    echo "  a2querysite [-q|--quiet] [VHOST]..."
+}
+
+INVOKE="$(echo "$(basename "$0")" | sed -n 's/^a2\(en\|dis\|query\)\(mod\|conf\|site\)$/\1\t\2/p')"
+if [ -z "$INVOKE" ]; then
+    print_usage >&2
+    exit 1
+fi
+
+if [ -z "${CONFIG_PATH:-}" ]; then
+    CONFIG_PATH="$(CDPATH= cd -- "/etc/apache2" 2> /dev/null && pwd -P)"
+fi
+if [ -z "$CONFIG_PATH" ] || [ ! -d "$CONFIG_PATH" ]; then
+    echo "Invalid config path '$CONFIG_PATH': No such directory" >&2
+    exit 1
+fi
+
+case "$(echo "$INVOKE" | cut -f1)" in
+    "en")
+        ACTION="enable"
+        ;;
+
+    "dis")
+        ACTION="disable"
+        ;;
+
+    "query")
+        ACTION="query"
+        ;;
+esac
+
+TYPE="$(echo "$INVOKE" | cut -f2)"
+case "$TYPE" in
+    "mod")
+        CLASS="module"
+        CLASS_DIR="mods"
+        ITEM_EXT=".load"
+        ;;
+
+    "conf")
+        CLASS="config"
+        CLASS_DIR="conf"
+        ITEM_EXT=".conf"
+        ;;
+
+    "site")
+        CLASS="virtual host"
+        CLASS_DIR="sites"
+        ITEM_EXT=".conf"
+        ;;
+esac
+
+if [ "$ACTION" == "query" ]; then
+    if [ $# -eq 0 ]; then
+        for ITEM_PATH in "$CONFIG_PATH/$CLASS_DIR-enabled/"*"$ITEM_EXT"; do
+            if [ -f "$ITEM_PATH" ]; then
+                echo "$(basename "$ITEM_PATH" "$ITEM_EXT")"
+            fi
+        done
+
+        exit
+    fi
+
+    QUIET="no"
+    if [ "$1" == "-q" ] || [ "$1" == "--quiet" ]; then
+        QUIET="yes"
+        shift
+    fi
+
+    EXIT_CODE=0
+    while [ $# -gt 0 ]; do
+        ITEM="$1"
+        shift
+
+        if [ "$TYPE" == "mod" ]; then
+            ITEM="$(echo "$ITEM" | sed 's/^\(mod_\(.*\)\(\.c\)\?\|\(.*\)\(_module\|\.load\|\.conf\)\)$/\2\4/')"
+        elif [ "${ITEM: -${#ITEM_EXT}}" == "$ITEM_EXT" ]; then
+            ITEM="${ITEM:0:-${#ITEM_EXT}}"
+        fi
+
+        if [ -f "$CONFIG_PATH/$CLASS_DIR-enabled/$ITEM$ITEM_EXT" ]; then
+            [ "$QUIET" == "yes" ] || echo "Apache $CLASS '$ITEM' is enabled"
+        elif [ -f "$CONFIG_PATH/$CLASS_DIR-available/$ITEM$ITEM_EXT" ]; then
+            [ "$QUIET" == "yes" ] || echo "Apache $CLASS '$ITEM' is disabled"
+            EXIT_CODE=1
+        else
+            [ "$QUIET" == "yes" ] || echo "Apache $CLASS '$ITEM' not found"
+            EXIT_CODE=1
+        fi
+    done
+
+    exit $EXIT_CODE
+fi
+
+if [ $# -eq 0 ]; then
+    print_usage >&2
+    exit 1
+fi
+
+EXIT_CODE=0
+case "$TYPE" in
+    "mod")
+        while [ $# -gt 0 ]; do
+            ITEM="$(echo "$1" | sed 's/^\(mod_\(.*\)\.so\|\(.*\)\(_module\|\.load\|\.conf\)\)$/\2\3/')"
+            shift
+
+            if [ ! -f "$CONFIG_PATH/mods-available/$ITEM.load" ]; then
+                echo "Unable to $ACTION unknown module '$ITEM'" >&2
+                EXIT_CODE=1
+                continue
+            fi
+
+            case "$ACTION" in
+                "enable")
+                    ln -fs "../mods-available/$ITEM.load" \
+                        "$CONFIG_PATH/mods-enabled/$ITEM.load"
+
+                    if [ -f "$CONFIG_PATH/mods-available/$ITEM.conf" ]; then
+                        ln -fs "../mods-available/$ITEM.conf" \
+                            "$CONFIG_PATH/mods-enabled/$ITEM.conf"
+                    fi
+                    ;;
+
+                "disable")
+                    rm -f "$CONFIG_PATH/mods-enabled/$ITEM.load" \
+                        "$CONFIG_PATH/mods-enabled/$ITEM.conf"
+                    ;;
+            esac
+        done
+        ;;
+
+    "conf"|"site")
+        while [ $# -gt 0 ]; do
+            ITEM="$1"
+            shift
+
+            if [ "${ITEM: -${#ITEM_EXT}}" == "$ITEM_EXT" ]; then
+                ITEM="${ITEM:0:-${#ITEM_EXT}}"
+            fi
+
+            if [ ! -f "$CONFIG_PATH/$CLASS_DIR-available/$ITEM$ITEM_EXT" ]; then
+                echo "Unable to $ACTION unknown $CLASS '$ITEM'" >&2
+                EXIT_CODE=1
+                continue
+            fi
+
+            case "$ACTION" in
+                "enable")
+                    ln -fs "../$CLASS_DIR-available/$ITEM$ITEM_EXT" \
+                        "$CONFIG_PATH/$CLASS_DIR-enabled/$ITEM$ITEM_EXT"
+                    ;;
+
+                "disable")
+                    rm -f "$CONFIG_PATH/$CLASS_DIR-enabled/$ITEM$ITEM_EXT"
+                    ;;
+            esac
+        done
+        ;;
+esac
+
+exit $EXIT_CODE
