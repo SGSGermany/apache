@@ -85,49 +85,31 @@ jobs:
         run: |
           source <(./tags.sh)
           echo "VERSION=$VERSION" | tee -a "$GITHUB_ENV"
-          echo "DEFAULT_TAGS=${DEFAULT_TAGS:-latest-default}" | tee -a "$GITHUB_ENV"
-          echo "BASE_TAGS=${BASE_TAGS:-latest}" | tee -a "$GITHUB_ENV"
+          echo "TAGS=${TAGS:-latest}" | tee -a "$GITHUB_ENV"
 
       - name: Check for updates
         run: |
-          BUILD_ACTION="$(TAGS="$DEFAULT_TAGS" "$CI_TOOLS_PATH/containers/check-for-updates.sh")"
+          BUILD_ACTION="$("$CI_TOOLS_PATH/containers/check-for-updates.sh")"
           echo "BUILD_ACTION=$BUILD_ACTION" | tee -a "$GITHUB_ENV"
 
       - name: Check for config changes
         if: ${{ env.BUILD_ACTION != '' }}
         run: |
-          buildah unshare ./default/check-config.sh
+          buildah unshare ./check-config.sh
 
-      - name: Build 'default' container image
+      - name: Build container image
         if: ${{ env.BUILD_ACTION != '' }}
         run: |
-          buildah unshare ./default/build.sh
+          buildah unshare ./build.sh
 
-      - name: Metadata of 'default' container image
-        run: |
-          "$CI_TOOLS_PATH/containers/get-metadata.sh" "$REGISTRY/$OWNER" "$IMAGE:latest-default"
-
-      - name: Build 'base' container image
-        if: ${{ env.BUILD_ACTION != '' }}
-        run: |
-          buildah unshare ./base/build.sh
-
-      - name: Metadata of 'base' container image
+      - name: Container image metadata
         run: |
           "$CI_TOOLS_PATH/containers/get-metadata.sh" "$REGISTRY/$OWNER" "$IMAGE:latest"
 
-      - name: Push 'default' container image
+      - name: Push container image
         if: ${{ env.BUILD_ACTION != '' }}
         uses: redhat-actions/push-to-registry@v2
         with:
           image: ${{ env.IMAGE }}
           registry: ${{ env.REGISTRY }}/${{ env.OWNER }}
-          tags: ${{ env.DEFAULT_TAGS }}
-
-      - name: Push 'base' container image
-        if: ${{ env.BUILD_ACTION != '' }}
-        uses: redhat-actions/push-to-registry@v2
-        with:
-          image: ${{ env.IMAGE }}
-          registry: ${{ env.REGISTRY }}/${{ env.OWNER }}
-          tags: ${{ env.BASE_TAGS }}
+          tags: ${{ env.TAGS }}

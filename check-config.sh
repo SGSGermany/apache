@@ -57,10 +57,10 @@ clean_conf() {
 }
 
 BUILD_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-[ -f "$BUILD_DIR/../container.env" ] && source "$BUILD_DIR/../container.env" \
+[ -f "$BUILD_DIR/container.env" ] && source "$BUILD_DIR/container.env" \
     || { echo "ERROR: Container environment not found" >&2; exit 1; }
 
-readarray -t -d' ' TAGS < <(printf '%s' "$DEFAULT_TAGS")
+readarray -t -d' ' TAGS < <(printf '%s' "$TAGS")
 
 if [ ! -d "$BUILD_DIR/base-conf" ]; then
     echo "Base configuration directory not found" >&2

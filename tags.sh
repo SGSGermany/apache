@@ -39,14 +39,7 @@ APACHE_VERSION_MAJOR="${BASH_REMATCH[2]}"
 
 TAG_DATE="$(date -u +'%Y%m%d%H%M')"
 
-DEFAULT_TAGS=(
-    "v$APACHE_VERSION-default" "v$APACHE_VERSION-default_$TAG_DATE"
-    "v$APACHE_VERSION_MINOR-default" "v$APACHE_VERSION_MINOR-default_$TAG_DATE"
-    "v$APACHE_VERSION_MAJOR-default" "v$APACHE_VERSION_MAJOR-default_$TAG_DATE"
-    "latest-default"
-)
-
-BASE_TAGS=(
+TAGS=(
     "v$APACHE_VERSION" "v${APACHE_VERSION}_$TAG_DATE"
     "v$APACHE_VERSION_MINOR" "v${APACHE_VERSION_MINOR}_$TAG_DATE"
     "v$APACHE_VERSION_MAJOR" "v${APACHE_VERSION_MAJOR}_$TAG_DATE"
@@ -54,5 +47,4 @@ BASE_TAGS=(
 )
 
 printf 'VERSION="%s"\n' "$APACHE_VERSION"
-printf 'DEFAULT_TAGS="%s"\n' "${DEFAULT_TAGS[*]}"
-printf 'BASE_TAGS="%s"\n' "${BASE_TAGS[*]}"
+printf 'TAGS="%s"\n' "${TAGS[*]}"

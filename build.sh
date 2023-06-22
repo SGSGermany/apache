@@ -21,10 +21,10 @@ cmd() {
 }
 
 BUILD_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-[ -f "$BUILD_DIR/../container.env" ] && source "$BUILD_DIR/../container.env" \
+[ -f "$BUILD_DIR/container.env" ] && source "$BUILD_DIR/container.env" \
     || { echo "ERROR: Container environment not found" >&2; exit 1; }
 
-readarray -t -d' ' TAGS < <(printf '%s' "$DEFAULT_TAGS")
+readarray -t -d' ' TAGS < <(printf '%s' "$TAGS")
 
 APACHE_MODULES=(
     "mpm_event"
@@ -34,28 +34,30 @@ APACHE_MODULES=(
     "authz_groupfile"
     "authz_user"
     "authz_core"
-    "access_compat"
     "auth_basic"
     "reqtimeout"
-    "filter"
     "mime"
     "log_config"
-    "env"
     "headers"
+    "http2"
+    "rewrite"
     "setenvif"
-    "version"
     "unixd"
-    "status"
     "autoindex"
     "dir"
     "alias"
 )
 
 APACHE_CONFIGS=(
-    "cgi-bin"
+    "charset"
+    "connection"
     "errors"
     "htaccess"
-    "htdocs"
+    "lookups"
+    "security"
+    "ssl"
+    "ssl-ocsp-stapling"
+    "ssl-security"
 )
 
 echo + "CONTAINER=\"\$(buildah from $BASE_IMAGE)\""
@@ -63,6 +65,14 @@ CONTAINER="$(buildah from "$BASE_IMAGE")"
 
 echo + "MOUNT=\"\$(buildah mount $CONTAINER)\""
 MOUNT="$(buildah mount "$CONTAINER")"
+
+cmd buildah run "$CONTAINER" -- \
+    adduser -u 65536 -s "/sbin/nologin" -D -h "/usr/local/apache2" -H apache2
+
+cmd buildah run "$CONTAINER" -- \
+    apk add --virtual .apache-run-deps \
+        inotify-tools \
+        openssl
 
 echo + "TEMP_DIR=\"\$(mktemp -d)\""
 TEMP_DIR="$(mktemp -d)"
@@ -75,14 +85,14 @@ cp -t "$TEMP_DIR/" \
 echo + "rm -rf …/usr/local/apache2/conf"
 rm -rf "$MOUNT/usr/local/apache2/conf"
 
+echo + "rm -rf …/usr/local/apache2/htdocs"
+rm -rf "$MOUNT/usr/local/apache2/htdocs"
+
 echo + "rsync -v -rl --exclude .gitignore ./src/ …/"
 rsync -v -rl --exclude '.gitignore' "$BUILD_DIR/src/" "$MOUNT/"
 
 echo + "rsync -v -rl $TEMP_DIR/ …/etc/apache2/"
 rsync -v -rl "$TEMP_DIR/" "$MOUNT/etc/apache2/"
-
-echo + "mv …/usr/local/apache2/htdocs …/var/www/html"
-mv "$MOUNT/usr/local/apache2/htdocs" "$MOUNT/var/www/html"
 
 cmd rm -rf "$TEMP_DIR"
 
@@ -101,7 +111,21 @@ cmd buildah run "$CONTAINER" -- \
 cmd buildah run "$CONTAINER" -- \
     a2enconf "${APACHE_CONFIGS[@]}"
 
-cmd buildah config --volume "/var/www/html" "$CONTAINER"
+cmd buildah config \
+    --port "80/tcp" \
+    --port "443/tcp" \
+    "$CONTAINER"
+
+cmd buildah config \
+    --volume "/etc/apache2/ssl" \
+    --volume "/var/log/apache2" \
+    --volume "/var/www" \
+    "$CONTAINER"
+
+cmd buildah config \
+    --entrypoint '[ "/entrypoint.sh" ]' \
+    --cmd "httpd-foreground" \
+    "$CONTAINER"
 
 echo + "APACHE_VERSION=\"\$(buildah run $CONTAINER -- /bin/sh -c 'echo \"\$HTTPD_VERSION\"')\""
 APACHE_VERSION="$(buildah run "$CONTAINER" -- /bin/sh -c 'echo "$HTTPD_VERSION"')"
