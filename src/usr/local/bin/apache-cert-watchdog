@@ -1,0 +1,41 @@
+#!/bin/sh
+# Apache
+# An Apache container with an improved configuration structure.
+#
+# Copyright (c) 2021  SGS Serious Gaming & Simulations GmbH
+#
+# This work is licensed under the terms of the MIT license.
+# For a copy, see LICENSE file or <https://opensource.org/licenses/MIT>.
+#
+# SPDX-License-Identifier: MIT
+# License-Filename: LICENSE
+
+set -eu -o pipefail
+export LC_ALL=C.UTF-8
+
+log() {
+    local TEMPLATE="$1"
+    shift
+
+    printf "[%s] [cert_watchdog:notice] $TEMPLATE\n" "$(date +'%a %b %d %T.000000 %Y')" "$@" >&2
+}
+
+set -- /etc/apache2/ssl/*/
+if [ $# -eq 1 ] && [ "$1" == "/etc/apache2/ssl/*/" ] || [ $# -eq 0 ]; then
+    log "Skipping cert watchdog service"
+    exit 0
+fi
+
+log "Starting cert watchdog service..."
+inotifywait -e close_write,delete,move -m "$@" \
+    | while read -r DIRECTORY EVENTS FILENAME; do
+        log "Receiving inotify event '%s' for '%s%s'..." "$EVENTS" "$DIRECTORY" "$FILENAME"
+
+        # wait till 300 sec (5 min) after the last event, new events reset the timer
+        while read -t 300 -r DIRECTORY EVENTS FILENAME; do
+            log "Receiving inotify event '%s' for '%s%s'..." "$EVENTS" "$DIRECTORY" "$FILENAME"
+        done
+
+        log "Gracefully restarting Apache 'httpd' daemon..."
+        apachectl graceful
+    done

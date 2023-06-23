@@ -11,40 +11,52 @@
 # License-Filename: LICENSE
 
 set -eu -o pipefail
-export LC_ALL=C
+export LC_ALL=C.UTF-8
+
+[ -v CI_TOOLS ] && [ "$CI_TOOLS" == "SGSGermany" ] \
+    || { echo "Invalid build environment: Environment variable 'CI_TOOLS' not set or invalid" >&2; exit 1; }
+
+[ -v CI_TOOLS_PATH ] && [ -d "$CI_TOOLS_PATH" ] \
+    || { echo "Invalid build environment: Environment variable 'CI_TOOLS_PATH' not set or invalid" >&2; exit 1; }
+
+source "$CI_TOOLS_PATH/helper/common.sh.inc"
+source "$CI_TOOLS_PATH/helper/git.sh.inc"
 
 BUILD_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-[ -f "$BUILD_DIR/container.env" ] && source "$BUILD_DIR/container.env" \
-    || { echo "ERROR: Container environment not found" >&2; exit 1; }
+source "$BUILD_DIR/container.env"
 
-IMAGE_ID="$(podman pull "$BASE_IMAGE" || true)"
-if [ -z "$IMAGE_ID" ]; then
-    echo "Failed to pull image '$BASE_IMAGE': No image with this tag found" >&2
+BUILD_INFO=""
+if [ $# -gt 0 ] && [[ "$1" =~ ^[a-zA-Z0-9_.-]+$ ]]; then
+    BUILD_INFO=".${1,,}"
+fi
+
+# get latest Apache version
+git_clone "$MERGE_IMAGE_GIT_REPO" "$MERGE_IMAGE_GIT_REF" "$BUILD_DIR/vendor" "./vendor"
+
+echo + "VERSION=\"\$(sed -ne 's/^ENV HTTPD_VERSION \(.*\)$/\1/p' $(quote "./vendor/$MERGE_IMAGE_BUD_CONTEXT/Dockerfile"))\"" >&2
+VERSION="$(sed -ne 's/^ENV HTTPD_VERSION \(.*\)$/\1/p' "$BUILD_DIR/vendor/$MERGE_IMAGE_BUD_CONTEXT/Dockerfile" || true)"
+
+if [ -z "$VERSION" ]; then
+    echo "Unable to read Apache version from './vendor/$MERGE_IMAGE_BUD_CONTEXT/Dockerfile': Version not found" >&2
+    exit 1
+elif ! [[ "$VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)([+~-]|$) ]]; then
+    echo "Unable to read Apache version from './vendor/$MERGE_IMAGE_BUD_CONTEXT/Dockerfile': '$VERSION' is no valid version" >&2
     exit 1
 fi
 
-APACHE_VERSION="$(podman image inspect --format '{{range .Config.Env}}{{printf "%q\n" .}}{{end}}' "$BASE_IMAGE" \
-    | sed -ne 's/^"HTTPD_VERSION=\(.*\)"$/\1/p')"
-if [ -z "$APACHE_VERSION" ]; then
-    echo "Unable to read image's env variable 'HTTPD_VERSION': No such variable" >&2
-    exit 1
-elif ! [[ "$APACHE_VERSION" =~ ^([0-9]+:)?([0-9]+)\.([0-9]+)\.([0-9]+)([+~-]|$) ]]; then
-    echo "Unable to read image's env variable 'HTTPD_VERSION': '$APACHE_VERSION' is no valid version" >&2
-    exit 1
-fi
+VERSION="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+VERSION_MINOR="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+VERSION_MAJOR="${BASH_REMATCH[1]}"
 
-APACHE_VERSION="${BASH_REMATCH[2]}.${BASH_REMATCH[3]}.${BASH_REMATCH[4]}"
-APACHE_VERSION_MINOR="${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
-APACHE_VERSION_MAJOR="${BASH_REMATCH[2]}"
-
-TAG_DATE="$(date -u +'%Y%m%d%H%M')"
+# build tags
+BUILD_INFO="$(date --utc +'%Y%m%d')$BUILD_INFO"
 
 TAGS=(
-    "v$APACHE_VERSION" "v${APACHE_VERSION}_$TAG_DATE"
-    "v$APACHE_VERSION_MINOR" "v${APACHE_VERSION_MINOR}_$TAG_DATE"
-    "v$APACHE_VERSION_MAJOR" "v${APACHE_VERSION_MAJOR}_$TAG_DATE"
+    "v$VERSION" "v$VERSION-$BUILD_INFO"
+    "v$VERSION_MINOR" "v$VERSION_MINOR-$BUILD_INFO"
+    "v$VERSION_MAJOR" "v$VERSION_MAJOR-$BUILD_INFO"
     "latest"
 )
 
-printf 'VERSION="%s"\n' "$APACHE_VERSION"
+printf 'VERSION="%s"\n' "$VERSION"
 printf 'TAGS="%s"\n' "${TAGS[*]}"

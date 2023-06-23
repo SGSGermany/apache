@@ -11,95 +11,97 @@
 # License-Filename: LICENSE
 
 set -eu -o pipefail
-export LC_ALL=C
+export LC_ALL=C.UTF-8
 shopt -s nullglob
 
-cmd() {
-    echo + "$@" >&2
-    "$@"
-    return $?
-}
+[ -v CI_TOOLS ] && [ "$CI_TOOLS" == "SGSGermany" ] \
+    || { echo "Invalid build environment: Environment variable 'CI_TOOLS' not set or invalid" >&2; exit 1; }
 
-prepare_local_conf() {
-    if [ ! -d "$TEMP_DIR/raw/local/$(dirname "$2")" ]; then
-        echo + "mkdir \$TEMP_DIR/raw/local/$(dirname "$2")" >&2
-        mkdir "$TEMP_DIR/raw/local/$(dirname "$2")"
+[ -v CI_TOOLS_PATH ] && [ -d "$CI_TOOLS_PATH" ] \
+    || { echo "Invalid build environment: Environment variable 'CI_TOOLS_PATH' not set or invalid" >&2; exit 1; }
 
-        echo + "mkdir \$TEMP_DIR/clean/local/$(dirname "$2")" >&2
-        mkdir "$TEMP_DIR/clean/local/$(dirname "$2")"
-    fi
+source "$CI_TOOLS_PATH/helper/common.sh.inc"
+source "$CI_TOOLS_PATH/helper/common-traps.sh.inc"
+source "$CI_TOOLS_PATH/helper/chkconf.sh.inc"
 
-    echo + "cp ./base-conf/$1 \$TEMP_DIR/raw/local/$2" >&2
-    cp "$BUILD_DIR/base-conf/$1" "$TEMP_DIR/raw/local/$2"
-
-    echo + "clean_conf \$TEMP_DIR/raw/local/$2 \$TEMP_DIR/clean/local/$2" >&2
-    clean_conf "$TEMP_DIR/raw/local/$2" "$TEMP_DIR/clean/local/$2"
-}
-
-prepare_upstream_conf() {
-    if [ ! -d "$TEMP_DIR/raw/upstream/$(dirname "$2")" ]; then
-        echo + "mkdir \$TEMP_DIR/raw/upstream/$(dirname "$2")" >&2
-        mkdir "$TEMP_DIR/raw/upstream/$(dirname "$2")"
-
-        echo + "mkdir \$TEMP_DIR/clean/upstream/$(dirname "$2")" >&2
-        mkdir "$TEMP_DIR/clean/upstream/$(dirname "$2")"
-    fi
-
-    echo + "cp …/$1 \$TEMP_DIR/raw/upstream/$2" >&2
-    cp "$MOUNT/$1" "$TEMP_DIR/raw/upstream/$2"
-
-    echo + "clean_conf \$TEMP_DIR/raw/upstream/$2 \$TEMP_DIR/clean/upstream/$2" >&2
-    clean_conf "$TEMP_DIR/raw/upstream/$2" "$TEMP_DIR/clean/upstream/$2"
-}
-
-clean_conf() {
+chkconf_clean() {
     sed -e 's/^\([^#]*\)#.*$/\1/' -e '/^\s*$/d' "$1" > "$2"
 }
 
 BUILD_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-[ -f "$BUILD_DIR/container.env" ] && source "$BUILD_DIR/container.env" \
-    || { echo "ERROR: Container environment not found" >&2; exit 1; }
+source "$BUILD_DIR/container.env"
 
-readarray -t -d' ' TAGS < <(printf '%s' "$TAGS")
+TAG="${TAGS%% *}"
 
-if [ ! -d "$BUILD_DIR/base-conf" ]; then
-    echo "Base configuration directory not found" >&2
+# check local image storage
+echo + "IMAGE_ID=\"\$(podman image inspect --format '{{.Id}}' $(quote "localhost/$IMAGE:$TAG"))\"" >&2
+IMAGE_ID="$(podman image inspect --format '{{.Id}}' "localhost/$IMAGE:$TAG" 2> /dev/null || true)"
+
+if [ -z "$IMAGE_ID" ]; then
+    echo "Failed to check base config of image 'localhost/$IMAGE:$TAG': No image with this tag found" >&2
     exit 1
 fi
 
-echo + "CONTAINER=\"\$(buildah from $BASE_IMAGE)\"" >&2
-CONTAINER="$(buildah from "$BASE_IMAGE")"
+echo + "MERGE_IMAGE=\"\$(podman image inspect --format '{{.Id}}' $(quote "localhost/$IMAGE-base"))\"" >&2
+MERGE_IMAGE="$(podman image inspect --format '{{.Id}}' "localhost/$IMAGE-base" 2> /dev/null || true)"
 
-echo + "MOUNT=\"\$(buildah mount $CONTAINER)\"" >&2
+if [ -z "$MERGE_IMAGE" ]; then
+    echo "Failed to check base config of image 'localhost/$IMAGE:$TAG':" \
+        "Invalid intermediate image 'localhost/$IMAGE-base': No image with this tag found" >&2
+    exit 1
+fi
+
+echo + "IMAGE_PARENT=\"\$(podman image inspect --format '{{.Parent}}' $(quote "localhost/$IMAGE:$TAG"))\"" >&2
+IMAGE_PARENT="$(podman image inspect --format '{{.Parent}}' "localhost/$IMAGE:$TAG" || true)"
+
+if [ -z "$IMAGE_PARENT" ]; then
+    echo "Failed to check base config of image 'localhost/$IMAGE:$TAG': Image metadata lacks information about the image's parent image" >&2
+    exit 1
+elif [ "$IMAGE_PARENT" != "$MERGE_IMAGE" ]; then
+    echo "Failed to check base config of image 'localhost/$IMAGE:$TAG': Invalid intermediate image 'localhost/$IMAGE-base':" \
+        "Image ID doesn't match with the parent image ID of 'localhost/$IMAGE:$TAG'" >&2
+    echo "ID of parent image of 'localhost/$IMAGE:$TAG': $IMAGE_PARENT" >&2
+    echo "ID of intermediate image 'localhost/$IMAGE-base': $MERGE_IMAGE" >&2
+    exit 1
+fi
+
+# prepare image for diffing
+echo + "CONTAINER=\"\$(buildah from $(quote "$MERGE_IMAGE"))\"" >&2
+CONTAINER="$(buildah from "$MERGE_IMAGE")"
+
+trap_exit buildah rm "$CONTAINER"
+
+echo + "MOUNT=\"\$(buildah mount $(quote "$CONTAINER"))\"" >&2
 MOUNT="$(buildah mount "$CONTAINER")"
 
-echo + "TEMP_DIR=\"\$(mktemp -d)\"" >&2
-TEMP_DIR="$(mktemp -d)"
+echo + "CHKCONF_DIR=\"\$(mktemp -d)\"" >&2
+CHKCONF_DIR="$(mktemp -d)"
 
-echo + "mkdir \$TEMP_DIR/{raw,clean}{,/{local,upstream}}" >&2
-mkdir \
-    "$TEMP_DIR/raw" "$TEMP_DIR/raw/local" "$TEMP_DIR/raw/upstream" \
-    "$TEMP_DIR/clean" "$TEMP_DIR/clean/local" "$TEMP_DIR/clean/upstream"
+trap_exit rm -rf "$CHKCONF_DIR"
+
+LOCAL_FILES=()
+UPSTRAM_FILES=()
 
 # Apache config
-prepare_local_conf "httpd.conf" "httpd.conf"
+LOCAL_FILES+=( "httpd.conf" "httpd.conf" )
 for FILE in "$BUILD_DIR/base-conf/extra/"*".conf"; do
-    prepare_local_conf "extra/$(basename "$FILE")" "extra/$(basename "$FILE")"
+    LOCAL_FILES+=( "extra/$(basename "$FILE")" "extra/$(basename "$FILE")" )
 done
 
-prepare_upstream_conf "usr/local/apache2/conf/httpd.conf" "httpd.conf"
+UPSTREAM_FILES+=( "usr/local/apache2/conf/httpd.conf" "httpd.conf" )
 for FILE in "$MOUNT/usr/local/apache2/conf/extra/"*".conf"; do
-    prepare_upstream_conf "usr/local/apache2/conf/extra/$(basename "$FILE")" "extra/$(basename "$FILE")"
+    UPSTREAM_FILES+=( "usr/local/apache2/conf/extra/$(basename "$FILE")" "extra/$(basename "$FILE")" )
 done
 
 # diff configs
-echo + "diff -q -r \$TEMP_DIR/clean/local/ \$TEMP_DIR/clean/upstream/" >&2
-if ! diff -q -r "$TEMP_DIR/clean/local/" "$TEMP_DIR/clean/upstream/" > /dev/null; then
-    ( cd "$TEMP_DIR/raw" ; diff -u -r ./local/ ./upstream/ )
-    exit 1
-fi
+chkconf_prepare \
+    --local "$BUILD_DIR/base-conf" "./base-conf" \
+    "$CHKCONF_DIR" "/tmp/…" \
+    "${LOCAL_FILES[@]}"
 
-echo + "rm -rf \$TEMP_DIR" >&2
-rm -rf "$TEMP_DIR"
+chkconf_prepare \
+    --upstream "$MOUNT" "…" \
+    "$CHKCONF_DIR" "/tmp/…" \
+    "${UPSTREAM_FILES[@]}"
 
-cmd buildah rm "$CONTAINER"
+chkconf_diff "$CHKCONF_DIR" "/tmp/…"

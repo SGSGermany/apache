@@ -1,6 +1,17 @@
 #!/bin/sh
+# Apache
+# An Apache container with an improved configuration structure.
+#
+# Copyright (c) 2021  SGS Serious Gaming & Simulations GmbH
+#
+# This work is licensed under the terms of the MIT license.
+# For a copy, see LICENSE file or <https://opensource.org/licenses/MIT>.
+#
+# SPDX-License-Identifier: MIT
+# License-Filename: LICENSE
+
 set -eu -o pipefail
-export LC_ALL=C
+export LC_ALL=C.UTF-8
 
 print_usage() {
     echo "Usage:"
