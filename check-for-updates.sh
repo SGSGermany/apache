@@ -46,8 +46,6 @@ if [ -z "${VERSION:-}" ]; then
         echo "Unable to read Apache version from './vendor/$MERGE_IMAGE_BUD_CONTEXT/Dockerfile': '$VERSION' is no valid version" >&2
         exit 1
     fi
-
-    VERSION="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
 fi
 
 chkupd_image_version "$REGISTRY/$OWNER/$IMAGE:$TAG" "$VERSION" || exit 0
