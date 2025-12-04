@@ -67,7 +67,7 @@ APACHE_CONFIGS=(
 
 git_clone "$MERGE_IMAGE_GIT_REPO" "$MERGE_IMAGE_GIT_REF" "$BUILD_DIR/vendor" "./vendor"
 
-con_build --tag "$IMAGE-base" \
+con_build --tag "$IMAGE-base" --no-cleanup \
     --from "$BASE_IMAGE" --check-from "$MERGE_IMAGE_BASE_IMAGE_PATTERN" \
     "$BUILD_DIR/vendor/$MERGE_IMAGE_BUD_CONTEXT" "./vendor/$MERGE_IMAGE_BUD_CONTEXT"
 
